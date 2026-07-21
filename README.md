@@ -1,4 +1,4 @@
-# Panorama Memory Probe
+# Panorama Video Processing
 
 This repo processes a 360-degree panorama video to the one first looks at one
 target view, then smoothly turns away, then turns back smoothly to the same target view.
