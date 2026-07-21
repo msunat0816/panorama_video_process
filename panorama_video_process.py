@@ -540,7 +540,7 @@ def run(input_path: Path, config: ProbeConfig) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Generate panorama memory probes.")
+    parser = argparse.ArgumentParser(description="Generate processed panorama videos.")
     parser.add_argument("input", type=Path, help="Input video file or directory.")
     parser.add_argument(
         "--output-dir",
@@ -548,7 +548,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Base output directory. Each run writes into an outputs_<run-timestamp> "
-            "subfolder. Defaults to outputs/panorama_memory_probes."
+            "subfolder. Defaults to outputs/panorama_video_process."
         ),
     )
     parser.add_argument(
@@ -588,7 +588,7 @@ def main() -> int:
     if args.min_final_target_duration_sec < 0:
         parser.error("--min-final-target-duration-sec must be >= 0")
 
-    base_output_dir = args.output_dir or Path("outputs") / "panorama_memory_probes"
+    base_output_dir = args.output_dir or Path("outputs") / "panorama_video_process"
     output_dir = base_output_dir / f"outputs_{args.run_timestamp}"
     target_hold_ratio_range = parse_range(args.target_hold_ratio_range, "--target-hold-ratio-range")
     away_yaw_delta_deg_range = parse_range(args.away_yaw_delta_deg_range, "--away-yaw-delta-deg-range")
