@@ -104,25 +104,25 @@ The script uses:
 Run on the included test videos:
 
 ```bash
-python panorama_memory_probe.py test_data
+python panorama_video_process.py test_data
 ```
 
 Run on one video:
 
 ```bash
-python panorama_memory_probe.py test_data/02692940-fd94-4af1-8ebc-577acacc617a.mp4
+python panorama_video_process.py test_data/02692940-fd94-4af1-8ebc-577acacc617a.mp4
 ```
 
 By default, outputs are written to:
 
 ```text
-outputs/panorama_memory_probes/outputs_<run-timestamp>/
+outputs/panorama_video_process/outputs_<run-timestamp>/
 ```
 
 For example:
 
 ```text
-outputs/panorama_memory_probes/outputs_202607211200/
+outputs/panorama_video_process/outputs_202607211200/
 ```
 
 Each run writes:
@@ -136,20 +136,20 @@ Each run writes:
 Generate one output per input video with the default settings:
 
 ```bash
-python panorama_memory_probe.py test_data
+python panorama_video_process.py test_data
 ```
 
 Generate 3 variants per input video:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --variants-per-video 3
 ```
 
 Use a fixed timestamp and overwrite existing files from that timestamp:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --run-timestamp 202607211200 \
   --overwrite
 ```
@@ -157,28 +157,28 @@ python panorama_memory_probe.py test_data \
 Choose target side randomly for each variant:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --side random
 ```
 
 Force the target side to the right:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --side right
 ```
 
 Make the away turn as large as possible within a custom range:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --away-yaw-delta-deg-range 150,175
 ```
 
 Use wider target views and narrower away views:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --target-fov-x-deg-range 105,115 \
   --away-fov-x-deg-range 80,95
 ```
@@ -186,7 +186,7 @@ python panorama_memory_probe.py test_data \
 Use longer target and away holds:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --target-hold-ratio-range 0.25,0.35 \
   --away-hold-ratio-range 0.25,0.35
 ```
@@ -194,7 +194,7 @@ python panorama_memory_probe.py test_data \
 Use longer smooth turns:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --turn-away-duration-ratio-range 0.15,0.20 \
   --turn-back-duration-ratio-range 0.15,0.20
 ```
@@ -202,7 +202,7 @@ python panorama_memory_probe.py test_data \
 Change pitch and roll:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --pitch-deg 5 \
   --roll-deg 0
 ```
@@ -210,7 +210,7 @@ python panorama_memory_probe.py test_data \
 Write outputs under a different base folder:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --output-dir outputs/my_probe_run
 ```
 
@@ -223,7 +223,7 @@ outputs/my_probe_run/outputs_<run-timestamp>/
 Stop immediately when one input video fails:
 
 ```bash
-python panorama_memory_probe.py test_data \
+python panorama_video_process.py test_data \
   --strict
 ```
 
@@ -232,7 +232,7 @@ python panorama_memory_probe.py test_data \
 | Parameter | Meaning | Default |
 | --- | --- | --- |
 | `input` | Input video file or directory | required |
-| `--output-dir` | Base output folder | `outputs/panorama_memory_probes` |
+| `--output-dir` | Base output folder | `outputs/panorama_video_process` |
 | `--run-timestamp` | Timestamp used in output names | current time |
 | `--seed` | Global random seed | `42` |
 | `--mode` | Experiment mode | `two_turn` |
