@@ -131,6 +131,9 @@ Each run writes:
 - `<run-timestamp>_metadata.jsonl`
 - `<run-timestamp>_errors.jsonl`, only if some videos fail
 
+The repo also includes `sample_outputs/` with the processed demo
+videos under `test_data/` and metadata. These files provide a quick visual checking. 
+
 ## Common Commands
 
 Generate one output per input video with the default settings:

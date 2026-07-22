@@ -216,6 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Large generated batch outputs.
 outputs/
+
+# Keep curated demo files in sample_outputs/ tracked for quick review.
 .DS_Store
 docs/
