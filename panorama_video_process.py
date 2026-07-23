@@ -21,15 +21,6 @@ import numpy as np
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm"}
 MODE_TWO_TURN = "two_turn"
 MODES = (MODE_TWO_TURN,)
-SIDE_LEFT = "left"
-SIDE_RIGHT = "right"
-SIDE_RANDOM = "random"
-FIXED_SIDES = (SIDE_LEFT, SIDE_RIGHT)
-SIDE_CHOICES = (SIDE_LEFT, SIDE_RIGHT, SIDE_RANDOM)
-SIDE_BASE_YAW_DEG = {
-    SIDE_LEFT: -90.0,
-    SIDE_RIGHT: 90.0,
-}
 
 
 @dataclass(frozen=True)
@@ -37,17 +28,14 @@ class ProbeConfig:
     output_dir: Path
     run_timestamp: str
     mode: str
-    side: str
     seed: int
     variants_per_video: int
-    target_hold_ratio_range: tuple[float, float]
+    target_yaw_deg_range: tuple[float, float]
     away_yaw_delta_deg_range: tuple[float, float]
-    away_hold_ratio_range: tuple[float, float]
-    turn_away_duration_ratio_range: tuple[float, float]
-    turn_back_duration_ratio_range: tuple[float, float]
-    min_final_target_duration_ratio: float
-    min_final_target_duration_sec: float
-    yaw_jitter_deg: float
+    away_hold_sec_range: tuple[float, float]
+    initial_target_min_sec: float
+    prediction_window_sec: float
+    turn_speed_deg_per_sec: float
     target_fov_x_deg_range: tuple[float, float]
     away_fov_x_deg_range: tuple[float, float]
     pitch_deg: float
@@ -149,15 +137,8 @@ def read_video_info(path: Path) -> VideoInfo:
     )
 
 
-def sample_ratio_as_frames(
-    rng: random.Random,
-    ratio_range: tuple[float, float],
-    info: VideoInfo,
-    *,
-    min_frames: int = 0,
-) -> int:
-    sampled_sec = info.duration_sec * rng.uniform(*ratio_range)
-    return max(min_frames, int(round(sampled_sec * info.fps)))
+def sec_to_frames(sec: float, fps: float, *, min_frames: int = 0) -> int:
+    return max(min_frames, int(round(sec * fps)))
 
 
 def smoothstep(value: float) -> float:
@@ -181,13 +162,6 @@ def lerp_yaw(start: float, end: float, weight: float) -> float:
     return normalize_yaw_deg(start + shortest_yaw_delta_deg(start, end) * weight)
 
 
-def shrink_frames(value: int, minimum: int, excess: int) -> tuple[int, int]:
-    if excess <= 0:
-        return value, 0
-    reduction = min(excess, max(0, value - minimum))
-    return value - reduction, excess - reduction
-
-
 def sample_away_yaw(
     target_yaw_deg: float,
     rng: random.Random,
@@ -203,47 +177,47 @@ def sample_two_turn_schedule(
     info: VideoInfo,
     rng: random.Random,
     config: ProbeConfig,
+    away_yaw_delta_deg: float,
 ) -> TwoTurnSchedule:
-    target_hold_frames = sample_ratio_as_frames(rng, config.target_hold_ratio_range, info)
-    turn_away_frames = sample_ratio_as_frames(
-        rng,
-        config.turn_away_duration_ratio_range,
-        info,
-        min_frames=1,
-    )
-    away_hold_frames = sample_ratio_as_frames(rng, config.away_hold_ratio_range, info)
-    turn_back_frames = sample_ratio_as_frames(
-        rng,
-        config.turn_back_duration_ratio_range,
-        info,
-        min_frames=1,
-    )
-    min_final_target_sec = max(
-        config.min_final_target_duration_sec,
-        info.duration_sec * config.min_final_target_duration_ratio,
-    )
-    final_target_hold_frames = max(0, int(round(min_final_target_sec * info.fps)))
+    turn_duration_sec = abs(away_yaw_delta_deg) / config.turn_speed_deg_per_sec
+    if turn_duration_sec >= config.prediction_window_sec:
+        raise ValueError(
+            "Turn-back duration must be shorter than --prediction-window-sec. "
+            "Increase --turn-speed-deg-per-sec or --prediction-window-sec."
+        )
 
-    if final_target_hold_frames + 2 > info.num_frames:
-        final_target_hold_frames = max(0, info.num_frames - 2)
+    turn_away_frames = sec_to_frames(turn_duration_sec, info.fps, min_frames=1)
+    turn_back_frames = sec_to_frames(turn_duration_sec, info.fps, min_frames=1)
+    prediction_window_frames = sec_to_frames(config.prediction_window_sec, info.fps, min_frames=1)
+    final_target_hold_frames = prediction_window_frames - turn_back_frames
+    if final_target_hold_frames < 1:
+        raise ValueError(
+            "Prediction window is too short to include both turn-back and final target hold frames."
+        )
 
-    available_motion_frames = max(0, info.num_frames - final_target_hold_frames)
-    turn_away_min = 1 if available_motion_frames >= 1 else 0
-    turn_back_min = 1 if available_motion_frames >= 2 else 0
+    min_target_hold_frames = sec_to_frames(config.initial_target_min_sec, info.fps, min_frames=1)
+    minimum_required_frames = min_target_hold_frames + turn_away_frames + prediction_window_frames
+    if minimum_required_frames > info.num_frames:
+        raise ValueError(
+            "Video is too short for the requested initial target hold, turn-away, "
+            "and prediction window durations."
+        )
 
-    excess = (
-        target_hold_frames
-        + turn_away_frames
-        + away_hold_frames
-        + turn_back_frames
-        - available_motion_frames
+    max_away_hold_frames = info.num_frames - minimum_required_frames
+    away_hold_low_frames = sec_to_frames(config.away_hold_sec_range[0], info.fps)
+    away_hold_high_frames = sec_to_frames(config.away_hold_sec_range[1], info.fps)
+    if max_away_hold_frames >= away_hold_low_frames:
+        away_hold_upper = min(away_hold_high_frames, max_away_hold_frames)
+        away_hold_frames = rng.randint(away_hold_low_frames, away_hold_upper)
+    else:
+        away_hold_frames = max_away_hold_frames
+
+    target_hold_frames = (
+        info.num_frames
+        - turn_away_frames
+        - away_hold_frames
+        - prediction_window_frames
     )
-    away_hold_frames, excess = shrink_frames(away_hold_frames, 0, excess)
-    target_hold_frames, excess = shrink_frames(target_hold_frames, 0, excess)
-    turn_away_frames, excess = shrink_frames(turn_away_frames, turn_away_min, excess)
-    turn_back_frames, excess = shrink_frames(turn_back_frames, turn_back_min, excess)
-    if excess > 0:
-        final_target_hold_frames = max(0, final_target_hold_frames - excess)
 
     target_hold_end_frame = target_hold_frames
     turn_away_start_frame = target_hold_end_frame
@@ -306,11 +280,6 @@ def project_view(
     return cv2.cvtColor(projected_hwc, cv2.COLOR_RGB2BGR)
 
 
-def target_yaw_for_side(side: str, yaw_jitter: float) -> tuple[float, float]:
-    base_yaw_deg = SIDE_BASE_YAW_DEG[side]
-    return base_yaw_deg, base_yaw_deg + yaw_jitter
-
-
 def make_metadata(
     *,
     info: VideoInfo,
@@ -320,10 +289,6 @@ def make_metadata(
     config: ProbeConfig,
     local_seed_text: str,
     mode: str,
-    side: str,
-    requested_side: str,
-    yaw_jitter: float,
-    base_yaw_deg: float,
     target_yaw_deg: float,
     away_yaw_deg: float,
     away_yaw_delta_deg: float,
@@ -333,7 +298,8 @@ def make_metadata(
 ) -> dict:
     aspect_ratio = info.width / info.height if info.height else None
     source_video = str(info.path.relative_to(input_root)) if input_root.is_dir() else str(info.path)
-    sample_id = f"{config.run_timestamp}_{info.video_id}_{mode}_{side}_v{variant_index:03d}_seed{config.seed}"
+    sample_id = f"{config.run_timestamp}_{info.video_id}_{mode}_v{variant_index:03d}_seed{config.seed}"
+    away_hold_clamped = schedule.away_hold_frames < sec_to_frames(config.away_hold_sec_range[0], info.fps)
 
     metadata = {
         "sample_id": sample_id,
@@ -354,12 +320,9 @@ def make_metadata(
         "output_height": info.height,
         "input_aspect_ratio": aspect_ratio,
         "aspect_ratio_warning": bool(aspect_ratio and abs(aspect_ratio - 2.0) > 0.05),
-        "side": side,
-        "requested_side": requested_side,
-        "base_yaw_deg": base_yaw_deg,
-        "yaw_jitter_deg": yaw_jitter,
         "yaw_deg": target_yaw_deg,
         "target_yaw_deg": target_yaw_deg,
+        "target_yaw_deg_range": list(config.target_yaw_deg_range),
         "away_yaw_deg": away_yaw_deg,
         "away_yaw_delta_deg": away_yaw_delta_deg,
         "pitch_deg": config.pitch_deg,
@@ -369,14 +332,13 @@ def make_metadata(
         "target_fov_x_deg_range": list(config.target_fov_x_deg_range),
         "away_fov_x_deg": away_fov_x_deg,
         "away_fov_x_deg_range": list(config.away_fov_x_deg_range),
-        "transition": "two_turn_smoothstep_camera",
-        "target_hold_ratio_range": list(config.target_hold_ratio_range),
+        "transition": "two_turn_smoothstep_camera_avg_speed",
         "away_yaw_delta_deg_range": list(config.away_yaw_delta_deg_range),
-        "away_hold_ratio_range": list(config.away_hold_ratio_range),
-        "turn_away_duration_ratio_range": list(config.turn_away_duration_ratio_range),
-        "turn_back_duration_ratio_range": list(config.turn_back_duration_ratio_range),
-        "min_final_target_duration_ratio": config.min_final_target_duration_ratio,
-        "min_final_target_duration_sec": config.min_final_target_duration_sec,
+        "away_hold_sec_range": list(config.away_hold_sec_range),
+        "away_hold_clamped": away_hold_clamped,
+        "initial_target_min_sec": config.initial_target_min_sec,
+        "prediction_window_sec": config.prediction_window_sec,
+        "turn_speed_deg_per_sec": config.turn_speed_deg_per_sec,
         "target_hold_frames": schedule.target_hold_frames,
         "target_hold_sec": schedule.target_hold_frames / info.fps,
         "target_hold_end_frame": schedule.target_hold_end_frame,
@@ -394,6 +356,8 @@ def make_metadata(
         "turn_back_end_frame": schedule.turn_back_end_frame,
         "final_target_hold_frames": schedule.final_target_hold_frames,
         "final_target_hold_sec": schedule.final_target_hold_frames / info.fps,
+        "prediction_window_start_frame": schedule.turn_back_start_frame,
+        "prediction_window_start_sec": schedule.turn_back_start_frame / info.fps,
         "projection_library": "equilib",
         "projection_api": "equi2pers",
     }
@@ -407,24 +371,20 @@ def write_probe_video(
     config: ProbeConfig,
 ) -> dict:
     mode = config.mode
-    requested_side = config.side
     local_seed_text = (
         f"{config.seed}|{info.path.relative_to(input_root) if input_root.is_dir() else info.path}|"
-        f"{variant_index}|{requested_side}|{mode}"
+        f"{variant_index}|{mode}"
     )
     rng = stable_rng(local_seed_text)
-    side = rng.choice(FIXED_SIDES) if requested_side == SIDE_RANDOM else requested_side
-    yaw_jitter = rng.uniform(-config.yaw_jitter_deg, config.yaw_jitter_deg)
-    base_yaw_deg, target_yaw_deg = target_yaw_for_side(side, yaw_jitter)
-    target_yaw_deg = normalize_yaw_deg(target_yaw_deg)
+    target_yaw_deg = normalize_yaw_deg(rng.uniform(*config.target_yaw_deg_range))
     away_yaw_deg, away_yaw_delta_deg = sample_away_yaw(target_yaw_deg, rng, config)
     target_fov_x_deg = rng.uniform(*config.target_fov_x_deg_range)
     away_fov_x_deg = rng.uniform(*config.away_fov_x_deg_range)
-    schedule = sample_two_turn_schedule(info, rng, config)
+    schedule = sample_two_turn_schedule(info, rng, config, away_yaw_delta_deg)
 
     output_path = (
         config.output_dir
-        / f"{config.run_timestamp}_{info.video_id}_{mode}_{side}_v{variant_index:03d}_seed{config.seed}.mp4"
+        / f"{config.run_timestamp}_{info.video_id}_{mode}_v{variant_index:03d}_seed{config.seed}.mp4"
     )
     if output_path.exists() and not config.overwrite:
         raise FileExistsError(f"Output already exists, pass --overwrite to replace: {output_path}")
@@ -484,10 +444,6 @@ def write_probe_video(
         config=config,
         local_seed_text=local_seed_text,
         mode=mode,
-        side=side,
-        requested_side=requested_side,
-        yaw_jitter=yaw_jitter,
-        base_yaw_deg=base_yaw_deg,
         target_yaw_deg=target_yaw_deg,
         away_yaw_deg=away_yaw_deg,
         away_yaw_delta_deg=away_yaw_delta_deg,
@@ -503,7 +459,36 @@ def write_probe_video(
 def append_jsonl(path: Path, records: Iterable[dict]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         for record in records:
-            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=False) + "\n")
+
+
+def make_extracted_metadata(metadata: dict) -> dict:
+    return {
+        "sample_id": metadata["sample_id"],
+        "source_video": metadata["source_video"],
+        "output_video": metadata["output_video"],
+        "rotation_speed_deg_per_sec": metadata["turn_speed_deg_per_sec"],
+        "target_yaw_deg": metadata["target_yaw_deg"],
+        "target_pitch_deg": metadata["pitch_deg"],
+        "target_roll_deg": metadata["roll_deg"],
+        "initial_target_hold_duration_sec": metadata["target_hold_sec"],
+        "turn_away_start_sec": metadata["turn_away_start_frame"] / metadata["fps"],
+        "turn_away_delta_yaw_deg": metadata["away_yaw_delta_deg"],
+        "away_yaw_deg": metadata["away_yaw_deg"],
+        "away_pitch_deg": metadata["pitch_deg"],
+        "away_roll_deg": metadata["roll_deg"],
+        "turn_away_duration_sec": metadata["turn_away_duration_sec"],
+        "turn_away_end_sec": metadata["turn_away_end_frame"] / metadata["fps"],
+        "away_hold_duration_sec": metadata["away_hold_sec"],
+        "away_leave_sec": metadata["away_hold_end_frame"] / metadata["fps"],
+        "turn_back_start_sec": metadata["turn_back_start_frame"] / metadata["fps"],
+        "turn_back_duration_sec": metadata["turn_back_duration_sec"],
+        "target_return_sec": metadata["turn_back_end_frame"] / metadata["fps"],
+        "final_target_hold_duration_sec": metadata["final_target_hold_sec"],
+        "prediction_window_start_sec": metadata["prediction_window_start_sec"],
+        "prediction_window_duration_sec": metadata["prediction_window_sec"],
+        "away_hold_clamped": metadata["away_hold_clamped"],
+    }
 
 
 def run(input_path: Path, config: ProbeConfig) -> int:
@@ -513,6 +498,7 @@ def run(input_path: Path, config: ProbeConfig) -> int:
         raise RuntimeError(f"No supported videos found under: {input_path}")
 
     metadata_path = config.output_dir / f"{config.run_timestamp}_metadata.jsonl"
+    extracted_metadata_path = config.output_dir / f"{config.run_timestamp}_extracted_metadata.jsonl"
     error_path = config.output_dir / f"{config.run_timestamp}_errors.jsonl"
     generated: list[dict] = []
 
@@ -534,8 +520,10 @@ def run(input_path: Path, config: ProbeConfig) -> int:
                 raise
 
     append_jsonl(metadata_path, generated)
+    append_jsonl(extracted_metadata_path, (make_extracted_metadata(record) for record in generated))
     print(f"Generated {len(generated)} {config.mode} video(s).")
     print(f"Metadata: {metadata_path}")
+    print(f"Extracted metadata: {extracted_metadata_path}")
     return 0 if generated else 1
 
 
@@ -558,16 +546,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--mode", choices=MODES, default=MODE_TWO_TURN)
-    parser.add_argument("--side", choices=SIDE_CHOICES, default=SIDE_LEFT)
     parser.add_argument("--variants-per-video", type=int, default=1)
-    parser.add_argument("--target-hold-ratio-range", default="0.20,0.25")
+    parser.add_argument("--target-yaw-deg-range", default="-180.0,180.0")
     parser.add_argument("--away-yaw-delta-deg-range", default="130.0,150.0")
-    parser.add_argument("--away-hold-ratio-range", default="0.20,0.25")
-    parser.add_argument("--turn-away-duration-ratio-range", default="0.1,0.15")
-    parser.add_argument("--turn-back-duration-ratio-range", default="0.1,0.15")
-    parser.add_argument("--min-final-target-duration-ratio", type=float, default=0.05)
-    parser.add_argument("--min-final-target-duration-sec", type=float, default=1.0)
-    parser.add_argument("--yaw-jitter-deg", type=float, default=15.0)
+    parser.add_argument("--away-hold-sec-range", default="60.0,120.0")
+    parser.add_argument("--initial-target-min-sec", type=float, default=5.0)
+    parser.add_argument("--prediction-window-sec", type=float, default=5.0)
+    parser.add_argument("--turn-speed-deg-per-sec", type=float, default=60.0) # Reduced from 90.0
     parser.add_argument("--target-fov-x-deg-range", default="100.0,110.0")
     parser.add_argument("--away-fov-x-deg-range", default="100.0,110.0")
     parser.add_argument("--pitch-deg", type=float, default=0.0)
@@ -583,34 +568,22 @@ def main() -> int:
 
     if args.variants_per_video < 1:
         parser.error("--variants-per-video must be >= 1")
-    if args.min_final_target_duration_ratio < 0:
-        parser.error("--min-final-target-duration-ratio must be >= 0")
-    if args.min_final_target_duration_sec < 0:
-        parser.error("--min-final-target-duration-sec must be >= 0")
+    if args.initial_target_min_sec <= 0:
+        parser.error("--initial-target-min-sec must be > 0")
+    if args.prediction_window_sec <= 0:
+        parser.error("--prediction-window-sec must be > 0")
+    if args.turn_speed_deg_per_sec <= 0:
+        parser.error("--turn-speed-deg-per-sec must be > 0")
 
     base_output_dir = args.output_dir or Path("outputs") / "panorama_video_process"
     output_dir = base_output_dir / f"outputs_{args.run_timestamp}"
-    target_hold_ratio_range = parse_range(args.target_hold_ratio_range, "--target-hold-ratio-range")
+    target_yaw_deg_range = parse_range(args.target_yaw_deg_range, "--target-yaw-deg-range")
     away_yaw_delta_deg_range = parse_range(args.away_yaw_delta_deg_range, "--away-yaw-delta-deg-range")
     target_fov_x_deg_range = parse_range(args.target_fov_x_deg_range, "--target-fov-x-deg-range")
     away_fov_x_deg_range = parse_range(args.away_fov_x_deg_range, "--away-fov-x-deg-range")
-    away_hold_ratio_range = parse_range(args.away_hold_ratio_range, "--away-hold-ratio-range")
-    turn_away_duration_ratio_range = parse_range(
-        args.turn_away_duration_ratio_range,
-        "--turn-away-duration-ratio-range",
-    )
-    turn_back_duration_ratio_range = parse_range(
-        args.turn_back_duration_ratio_range,
-        "--turn-back-duration-ratio-range",
-    )
-    for value, name in (
-        (target_hold_ratio_range, "--target-hold-ratio-range"),
-        (away_hold_ratio_range, "--away-hold-ratio-range"),
-        (turn_away_duration_ratio_range, "--turn-away-duration-ratio-range"),
-        (turn_back_duration_ratio_range, "--turn-back-duration-ratio-range"),
-    ):
-        if value[0] < 0:
-            parser.error(f"{name} must be >= 0")
+    away_hold_sec_range = parse_range(args.away_hold_sec_range, "--away-hold-sec-range")
+    if away_hold_sec_range[0] < 0:
+        parser.error("--away-hold-sec-range must be >= 0")
     if away_yaw_delta_deg_range[0] < 0:
         parser.error("--away-yaw-delta-deg-range must be >= 0")
     if target_fov_x_deg_range[0] <= 0:
@@ -622,17 +595,14 @@ def main() -> int:
         output_dir=output_dir,
         run_timestamp=args.run_timestamp,
         mode=args.mode,
-        side=args.side,
         seed=args.seed,
         variants_per_video=args.variants_per_video,
-        target_hold_ratio_range=target_hold_ratio_range,
+        target_yaw_deg_range=target_yaw_deg_range,
         away_yaw_delta_deg_range=away_yaw_delta_deg_range,
-        away_hold_ratio_range=away_hold_ratio_range,
-        turn_away_duration_ratio_range=turn_away_duration_ratio_range,
-        turn_back_duration_ratio_range=turn_back_duration_ratio_range,
-        min_final_target_duration_ratio=args.min_final_target_duration_ratio,
-        min_final_target_duration_sec=args.min_final_target_duration_sec,
-        yaw_jitter_deg=args.yaw_jitter_deg,
+        away_hold_sec_range=away_hold_sec_range,
+        initial_target_min_sec=args.initial_target_min_sec,
+        prediction_window_sec=args.prediction_window_sec,
+        turn_speed_deg_per_sec=args.turn_speed_deg_per_sec,
         target_fov_x_deg_range=target_fov_x_deg_range,
         away_fov_x_deg_range=away_fov_x_deg_range,
         pitch_deg=args.pitch_deg,
