@@ -22,6 +22,9 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm"}
 MODE_TWO_TURN = "two_turn"
 MODE_AWAY_TARGET_AWAY_TARGET = "away_target_away_target"
 MODES = (MODE_TWO_TURN, MODE_AWAY_TARGET_AWAY_TARGET)
+AWAY_PAIR_SAME = "same"
+AWAY_PAIR_OPPOSITE = "opposite"
+AWAY_PAIR_MODES = (AWAY_PAIR_SAME, AWAY_PAIR_OPPOSITE)
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,7 @@ class ProbeConfig:
     output_dir: Path
     run_timestamp: str
     mode: str
+    away_pair_mode: str
     seed: int
     variants_per_video: int
     target_yaw_deg_range: tuple[float, float]
@@ -198,6 +202,17 @@ def sample_away_yaw(
     return normalize_yaw_deg(target_yaw_deg + signed_delta), signed_delta
 
 
+def sample_away_yaw_with_direction(
+    target_yaw_deg: float,
+    direction: float,
+    rng: random.Random,
+    config: ProbeConfig,
+) -> tuple[float, float]:
+    delta = rng.uniform(*config.away_yaw_delta_deg_range)
+    signed_delta = direction * delta
+    return normalize_yaw_deg(target_yaw_deg + signed_delta), signed_delta
+
+
 def sample_two_turn_schedule(
     info: VideoInfo,
     rng: random.Random,
@@ -273,18 +288,24 @@ def sample_away_target_away_target_schedule(
     info: VideoInfo,
     rng: random.Random,
     config: ProbeConfig,
-    away_yaw_delta_deg: float,
+    entry_away_yaw_delta_deg: float,
+    exit_away_yaw_delta_deg: float,
 ) -> AwayTargetAwayTargetSchedule:
-    turn_duration_sec = abs(away_yaw_delta_deg) / config.turn_speed_deg_per_sec
-    if turn_duration_sec >= config.prediction_window_sec:
+    entry_turn_duration_sec = abs(entry_away_yaw_delta_deg) / config.turn_speed_deg_per_sec
+    exit_turn_duration_sec = abs(exit_away_yaw_delta_deg) / config.turn_speed_deg_per_sec
+    if exit_turn_duration_sec >= config.prediction_window_sec:
         raise ValueError(
             "Final turn-back duration must be shorter than --prediction-window-sec. "
             "Increase --turn-speed-deg-per-sec or --prediction-window-sec."
         )
 
-    entry_turn_to_target_frames = sec_to_frames(turn_duration_sec, info.fps, min_frames=1)
-    turn_to_exit_away_frames = sec_to_frames(turn_duration_sec, info.fps, min_frames=1)
-    turn_back_frames = sec_to_frames(turn_duration_sec, info.fps, min_frames=1)
+    entry_turn_to_target_frames = sec_to_frames(
+        entry_turn_duration_sec, info.fps, min_frames=1
+    )
+    turn_to_exit_away_frames = sec_to_frames(
+        exit_turn_duration_sec, info.fps, min_frames=1
+    )
+    turn_back_frames = sec_to_frames(exit_turn_duration_sec, info.fps, min_frames=1)
     prediction_window_frames = sec_to_frames(config.prediction_window_sec, info.fps, min_frames=1)
     final_target_hold_frames = prediction_window_frames - turn_back_frames
     if final_target_hold_frames < 1:
@@ -505,10 +526,13 @@ def make_away_target_away_target_metadata(
     config: ProbeConfig,
     local_seed_text: str,
     target_yaw_deg: float,
-    away_yaw_deg: float,
-    away_yaw_delta_deg: float,
+    entry_away_yaw_deg: float,
+    entry_away_yaw_delta_deg: float,
+    exit_away_yaw_deg: float,
+    exit_away_yaw_delta_deg: float,
     target_fov_x_deg: float,
-    away_fov_x_deg: float,
+    entry_away_fov_x_deg: float,
+    exit_away_fov_x_deg: float,
     schedule: AwayTargetAwayTargetSchedule,
 ) -> dict:
     aspect_ratio = info.width / info.height if info.height else None
@@ -540,7 +564,7 @@ def make_away_target_away_target_metadata(
         "source_video": source_video,
         "output_video": str(output_path),
         "mode": mode,
-        "away_pair_mode": "same",
+        "away_pair_mode": config.away_pair_mode,
         "video_id": info.video_id,
         "variant_index": variant_index,
         "seed": config.seed,
@@ -560,23 +584,28 @@ def make_away_target_away_target_metadata(
         "target_yaw_deg_range": list(config.target_yaw_deg_range),
         "target_fov_x_deg": target_fov_x_deg,
         "target_fov_x_deg_range": list(config.target_fov_x_deg_range),
-        "entry_away_yaw_deg": away_yaw_deg,
-        "entry_away_fov_x_deg": away_fov_x_deg,
-        "entry_away_delta_deg": away_yaw_delta_deg,
-        "exit_away_yaw_deg": away_yaw_deg,
-        "exit_away_fov_x_deg": away_fov_x_deg,
-        "exit_away_delta_deg": away_yaw_delta_deg,
-        "entry_exit_away_same": True,
-        "entry_exit_away_distance_deg": 0.0,
-        "away_yaw_deg": away_yaw_deg,
-        "away_yaw_delta_deg": away_yaw_delta_deg,
-        "away_fov_x_deg": away_fov_x_deg,
+        "entry_away_yaw_deg": entry_away_yaw_deg,
+        "entry_away_fov_x_deg": entry_away_fov_x_deg,
+        "entry_away_delta_deg": entry_away_yaw_delta_deg,
+        "exit_away_yaw_deg": exit_away_yaw_deg,
+        "exit_away_fov_x_deg": exit_away_fov_x_deg,
+        "exit_away_delta_deg": exit_away_yaw_delta_deg,
+        "entry_exit_away_same": config.away_pair_mode == AWAY_PAIR_SAME,
+        "entry_exit_away_distance_deg": abs(
+            shortest_yaw_delta_deg(entry_away_yaw_deg, exit_away_yaw_deg)
+        ),
+        "away_yaw_deg": entry_away_yaw_deg,
+        "away_yaw_delta_deg": entry_away_yaw_delta_deg,
+        "away_fov_x_deg": entry_away_fov_x_deg,
         "away_yaw_delta_deg_range": list(config.away_yaw_delta_deg_range),
         "away_fov_x_deg_range": list(config.away_fov_x_deg_range),
         "pitch_deg": config.pitch_deg,
         "roll_deg": config.roll_deg,
         "fov_x_deg": target_fov_x_deg,
-        "transition": "away_target_away_target_same_smoothstep_camera_avg_speed",
+        "transition": (
+            f"away_target_away_target_{config.away_pair_mode}_"
+            "smoothstep_camera_avg_speed"
+        ),
         "entry_away_hold_sec_range": list(config.entry_away_hold_sec_range),
         "away_hold_sec_range": list(config.away_hold_sec_range),
         "entry_away_hold_clamped": entry_away_hold_clamped,
@@ -719,18 +748,35 @@ def write_away_target_away_target_probe_video(
     mode = config.mode
     local_seed_text = (
         f"{config.seed}|{info.path.relative_to(input_root) if input_root.is_dir() else info.path}|"
-        f"{variant_index}|{mode}|same"
+        f"{variant_index}|{mode}|{config.away_pair_mode}"
     )
     rng = stable_rng(local_seed_text)
     target_yaw_deg = normalize_yaw_deg(rng.uniform(*config.target_yaw_deg_range))
-    away_yaw_deg, away_yaw_delta_deg = sample_away_yaw(target_yaw_deg, rng, config)
+    entry_away_yaw_deg, entry_away_yaw_delta_deg = sample_away_yaw(
+        target_yaw_deg, rng, config
+    )
+    if config.away_pair_mode == AWAY_PAIR_OPPOSITE:
+        entry_direction = 1.0 if entry_away_yaw_delta_deg >= 0 else -1.0
+        exit_away_yaw_deg, exit_away_yaw_delta_deg = sample_away_yaw_with_direction(
+            target_yaw_deg, -entry_direction, rng, config
+        )
+    else:
+        exit_away_yaw_deg = entry_away_yaw_deg
+        exit_away_yaw_delta_deg = entry_away_yaw_delta_deg
     target_fov_x_deg = rng.uniform(*config.target_fov_x_deg_range)
     away_fov_x_deg = rng.uniform(*config.away_fov_x_deg_range)
-    schedule = sample_away_target_away_target_schedule(info, rng, config, away_yaw_delta_deg)
+    entry_away_fov_x_deg = away_fov_x_deg
+    exit_away_fov_x_deg = away_fov_x_deg
+    schedule = sample_away_target_away_target_schedule(
+        info, rng, config, entry_away_yaw_delta_deg, exit_away_yaw_delta_deg
+    )
 
     output_path = (
         config.output_dir
-        / f"{config.run_timestamp}_{info.video_id}_{mode}_same_v{variant_index:03d}_seed{config.seed}.mp4"
+        / (
+            f"{config.run_timestamp}_{info.video_id}_{mode}_{config.away_pair_mode}_"
+            f"v{variant_index:03d}_seed{config.seed}.mp4"
+        )
     )
     if output_path.exists() and not config.overwrite:
         raise FileExistsError(f"Output already exists, pass --overwrite to replace: {output_path}")
@@ -752,14 +798,14 @@ def write_away_target_away_target_probe_video(
             if not ok:
                 break
             if frame_index < schedule.entry_away_hold_end_frame:
-                frame_yaw_deg = away_yaw_deg
-                frame_fov_x_deg = away_fov_x_deg
+                frame_yaw_deg = entry_away_yaw_deg
+                frame_fov_x_deg = entry_away_fov_x_deg
             elif frame_index < schedule.entry_turn_to_target_end_frame:
                 transition_index = frame_index - schedule.entry_turn_to_target_start_frame
                 progress = transition_index / max(1, schedule.entry_turn_to_target_frames - 1)
                 weight = smoothstep(progress)
-                frame_yaw_deg = lerp_yaw(away_yaw_deg, target_yaw_deg, weight)
-                frame_fov_x_deg = lerp(away_fov_x_deg, target_fov_x_deg, weight)
+                frame_yaw_deg = lerp_yaw(entry_away_yaw_deg, target_yaw_deg, weight)
+                frame_fov_x_deg = lerp(entry_away_fov_x_deg, target_fov_x_deg, weight)
             elif frame_index < schedule.middle_target_hold_end_frame:
                 frame_yaw_deg = target_yaw_deg
                 frame_fov_x_deg = target_fov_x_deg
@@ -767,17 +813,17 @@ def write_away_target_away_target_probe_video(
                 transition_index = frame_index - schedule.turn_to_exit_away_start_frame
                 progress = transition_index / max(1, schedule.turn_to_exit_away_frames - 1)
                 weight = smoothstep(progress)
-                frame_yaw_deg = lerp_yaw(target_yaw_deg, away_yaw_deg, weight)
-                frame_fov_x_deg = lerp(target_fov_x_deg, away_fov_x_deg, weight)
+                frame_yaw_deg = lerp_yaw(target_yaw_deg, exit_away_yaw_deg, weight)
+                frame_fov_x_deg = lerp(target_fov_x_deg, exit_away_fov_x_deg, weight)
             elif frame_index < schedule.exit_away_hold_end_frame:
-                frame_yaw_deg = away_yaw_deg
-                frame_fov_x_deg = away_fov_x_deg
+                frame_yaw_deg = exit_away_yaw_deg
+                frame_fov_x_deg = exit_away_fov_x_deg
             elif frame_index < schedule.turn_back_end_frame:
                 transition_index = frame_index - schedule.turn_back_start_frame
                 progress = transition_index / max(1, schedule.turn_back_frames - 1)
                 weight = smoothstep(progress)
-                frame_yaw_deg = lerp_yaw(away_yaw_deg, target_yaw_deg, weight)
-                frame_fov_x_deg = lerp(away_fov_x_deg, target_fov_x_deg, weight)
+                frame_yaw_deg = lerp_yaw(exit_away_yaw_deg, target_yaw_deg, weight)
+                frame_fov_x_deg = lerp(exit_away_fov_x_deg, target_fov_x_deg, weight)
             else:
                 frame_yaw_deg = target_yaw_deg
                 frame_fov_x_deg = target_fov_x_deg
@@ -799,10 +845,13 @@ def write_away_target_away_target_probe_video(
         config=config,
         local_seed_text=local_seed_text,
         target_yaw_deg=target_yaw_deg,
-        away_yaw_deg=away_yaw_deg,
-        away_yaw_delta_deg=away_yaw_delta_deg,
+        entry_away_yaw_deg=entry_away_yaw_deg,
+        entry_away_yaw_delta_deg=entry_away_yaw_delta_deg,
+        exit_away_yaw_deg=exit_away_yaw_deg,
+        exit_away_yaw_delta_deg=exit_away_yaw_delta_deg,
         target_fov_x_deg=target_fov_x_deg,
-        away_fov_x_deg=away_fov_x_deg,
+        entry_away_fov_x_deg=entry_away_fov_x_deg,
+        exit_away_fov_x_deg=exit_away_fov_x_deg,
         schedule=schedule,
     )
     metadata["decoded_frames"] = frame_index
@@ -951,6 +1000,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--mode", choices=MODES, default=MODE_TWO_TURN)
+    parser.add_argument("--away-pair-mode", choices=AWAY_PAIR_MODES, default=AWAY_PAIR_SAME)
     parser.add_argument("--variants-per-video", type=int, default=1)
     parser.add_argument("--target-yaw-deg-range", default="-180.0,180.0")
     parser.add_argument("--away-yaw-delta-deg-range", default=None)
@@ -1031,6 +1081,7 @@ def main() -> int:
         output_dir=output_dir,
         run_timestamp=args.run_timestamp,
         mode=args.mode,
+        away_pair_mode=args.away_pair_mode,
         seed=args.seed,
         variants_per_video=args.variants_per_video,
         target_yaw_deg_range=target_yaw_deg_range,
