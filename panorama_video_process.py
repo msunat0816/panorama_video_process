@@ -1044,7 +1044,7 @@ def main() -> int:
         "95.0,105.0" if args.mode == MODE_AWAY_TARGET_AWAY_TARGET else "100.0,110.0"
     )
     default_away_hold_sec_range = (
-        "5.0,120.0" if args.mode == MODE_AWAY_TARGET_AWAY_TARGET else "60.0,120.0"
+        "60.0,120.0" if args.mode == MODE_AWAY_TARGET_AWAY_TARGET else "60.0,120.0"
     )
     away_yaw_delta_deg_range = parse_range(
         args.away_yaw_delta_deg_range or default_away_yaw_delta_deg_range,
