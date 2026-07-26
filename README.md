@@ -403,13 +403,13 @@ python visualize_last_away_duration.py \
 I've tried to generate 3 modes output for each of the 15 toy examples and the distribution is one plot per condition:
 
 ### `two_turn`
-![alt text](outputs/panorama_video_process/outputs_202607251246/202607251246_metadata_last_away_duration_distribution.png)
+![two_turn last-away duration distribution](assets/readme/two_turn_last_away_duration_distribution.png)
 
 ### `away_target_away_target` + `same`
-![alt text](outputs/panorama_video_process/outputs_202607251629/202607251629_metadata_last_away_duration_distribution.png)
+![away_target same last-away duration distribution](assets/readme/away_target_same_last_away_duration_distribution.png)
 
 ### `away_target_away_target` + `opposite`
-![alt text](outputs/panorama_video_process/outputs_202607251640/202607251640_metadata_last_away_duration_distribution.png)
+![away_target opposite last-away duration distribution](assets/readme/away_target_opposite_last_away_duration_distribution.png)
 
 ## Notes
 
